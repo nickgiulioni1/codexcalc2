@@ -1,4 +1,4 @@
-import React, { useEffect, useId, useState } from "react";
+import React, { useEffect, useId, useMemo, useState } from "react";
 import {
   Strategy,
   BuyHoldInputs,
@@ -15,7 +15,6 @@ import {
 } from "../calculator";
 import { calculateRehabTotal, RehabItem, RehabSelection } from "../calculator/rehab";
 import { upsertAnalysis, searchProperties } from "../data/store";
-import { useMemo } from "react";
 import { SummaryCard } from "../components/SummaryCard";
 import { InvestmentTable } from "../components/InvestmentTable";
 import { CurrencyField } from "../components/fields/CurrencyField";
@@ -433,6 +432,16 @@ export function AnalyzerPage() {
   ] as const;
   const rehabQualityMultipliers: Record<"A" | "B" | "C", number> = { A: 1.3, B: 1, C: 0.8 };
   const [rehabQuality, setRehabQuality] = useState<(typeof rehabQualityOptions)[number]>(rehabQualityOptions[1]);
+  const rehabViewOptions = [
+    { id: "detailed", label: "Detailed table", description: "Edit quantities and pricing inline." },
+    {
+      id: "summary",
+      label: "Category rollup",
+      description: "See spend by trade and make focused tweaks.",
+    },
+  ] as const;
+  const [rehabView, setRehabView] =
+    useState<(typeof rehabViewOptions)[number]>(rehabViewOptions[0]);
   useEffect(() => {
     const match = propertySuggestions.find(
       (p) => `${p.address_line_1}, ${p.city}`.toLowerCase() === propertyQuery.toLowerCase()
@@ -468,6 +477,79 @@ export function AnalyzerPage() {
   });
 
   const rehabTotal = calculateRehabTotal(rehabItems, rehabSelections, rehabQuality.id as "A" | "B" | "C", rehabQualityMultipliers);
+
+  const rehabTableData = useMemo(() => {
+    const grouped = new Map<
+      string,
+      {
+        category: string;
+        rows: {
+          item: RehabItem;
+          selection: RehabSelection;
+          priceBands: ReturnType<typeof getPriceBands>;
+          effectiveUnitPrice: number;
+          itemTotal: number;
+        }[];
+      }
+    >();
+
+    rehabSelections.forEach((sel) => {
+      const item = rehabItems.find((it) => it.id === sel.id);
+      if (!item) return;
+      const category = item.category ?? "General";
+      const priceBands = getPriceBands(item, sel, rehabQuality.id as "A" | "B" | "C", rehabQualityMultipliers);
+      const effectiveUnitPrice = resolveItemUnitPrice(
+        item,
+        sel,
+        rehabQuality.id as "A" | "B" | "C",
+        rehabQualityMultipliers
+      );
+      const itemTotal = (sel.quantity || 0) * effectiveUnitPrice;
+      const bucket = grouped.get(category) ?? { category, rows: [] };
+      bucket.rows.push({ item, selection: sel, priceBands, effectiveUnitPrice, itemTotal });
+      grouped.set(category, bucket);
+    });
+
+    return Array.from(grouped.values()).sort((a, b) => a.category.localeCompare(b.category));
+  }, [rehabItems, rehabSelections, rehabQuality.id, rehabQualityMultipliers]);
+
+  const rehabCategorySummaries = useMemo(() => {
+    const grouped = new Map<
+      string,
+      {
+        category: string;
+        selectedCount: number;
+        totalLines: number;
+        budget: number;
+      }
+    >();
+
+    rehabSelections.forEach((sel) => {
+      const item = rehabItems.find((it) => it.id === sel.id);
+      if (!item) return;
+      const category = item.category ?? "General";
+      const summary = grouped.get(category) ?? {
+        category,
+        selectedCount: 0,
+        totalLines: 0,
+        budget: 0,
+      };
+      summary.totalLines += 1;
+      if (sel.selected) {
+        const price = resolveItemUnitPrice(
+          item,
+          sel,
+          rehabQuality.id as "A" | "B" | "C",
+          rehabQualityMultipliers
+        );
+        summary.selectedCount += 1;
+        summary.budget += (sel.quantity || 0) * price;
+      }
+      grouped.set(category, summary);
+    });
+
+    return Array.from(grouped.values()).sort((a, b) => b.budget - a.budget || a.category.localeCompare(b.category));
+  }, [rehabItems, rehabSelections, rehabQuality.id, rehabQualityMultipliers]);
 
   const applyRehabToCurrentStrategy = () => {
     if (strategy === Strategy.BRRRR) {
@@ -1451,107 +1533,183 @@ export function AnalyzerPage() {
             subtitle="Pick only the line items you need; we will roll up the total."
             defaultOpen={false}
           >
-            <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center", marginBottom: 8 }}>
-              <label className="field-label">
-                <span>Scope quality</span>
-                <button
-                  type="button"
-                  className="help-icon"
-                  title="Use grade to scale unit costs across all line items."
-                  data-tip="Use grade to scale unit costs across all line items."
-                  aria-label="Scope quality info"
+            <div className="rehab-toolbar">
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+                <label className="field-label" style={{ margin: 0 }}>
+                  <span>Scope quality</span>
+                  <button
+                    type="button"
+                    className="help-icon"
+                    title="Use grade to scale unit costs across all line items."
+                    data-tip="Use grade to scale unit costs across all line items."
+                    aria-label="Scope quality info"
+                  >
+                    ?
+                  </button>
+                </label>
+                <select
+                  value={rehabQuality.id}
+                  onChange={(e) => {
+                    const next = rehabQualityOptions.find((o) => o.id === e.target.value);
+                    if (next) setRehabQuality(next);
+                  }}
+                  className="rehab-quality-select"
                 >
-                  ?
-                </button>
-              </label>
-              <select
-                value={rehabQuality.id}
-                onChange={(e) => {
-                  const next = rehabQualityOptions.find((o) => o.id === e.target.value);
-                  if (next) setRehabQuality(next);
-                }}
-                style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid #dfe3e8" }}
-              >
-                {rehabQualityOptions.map((opt) => (
-                  <option key={opt.id} value={opt.id}>
-                    {opt.label}
-                  </option>
+                  {rehabQualityOptions.map((opt) => (
+                    <option key={opt.id} value={opt.id}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+                <small style={{ color: "#64748b" }}>
+                  A = B +30%. Items include pre-set C and B pricing; overrides stick to the active quality.
+                </small>
+              </div>
+              <div className="rehab-view-toggle" role="group" aria-label="Rehab layout options">
+                {rehabViewOptions.map((opt) => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    className={rehabView.id === opt.id ? "rehab-view-btn active" : "rehab-view-btn"}
+                    onClick={() => setRehabView(opt)}
+                  >
+                    <div className="rehab-view-btn__label">{opt.label}</div>
+                    <div className="rehab-view-btn__hint">{opt.description}</div>
+                  </button>
                 ))}
-              </select>
-              <small style={{ color: "#64748b" }}>
-                A = B +30%. Items include pre-set C and B pricing; overrides stick to the active quality.
-              </small>
+              </div>
             </div>
-            <div className="grid two">
-              {rehabSelections.map((sel) => {
-                const item = rehabItems.find((r) => r.id === sel.id)!;
-                const effectiveUnitPrice = resolveItemUnitPrice(item, sel, rehabQuality.id as "A" | "B" | "C", rehabQualityMultipliers);
-                const priceBands = getPriceBands(item, sel, rehabQuality.id as "A" | "B" | "C", rehabQualityMultipliers);
-                return (
-                  <div key={item.id} className="card" style={{ boxShadow: "none", borderColor: "#e2e8f0" }}>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                      <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <input
-                          type="checkbox"
-                          checked={sel.selected}
-                          onChange={(e) =>
-                            setRehabSelections((prev) =>
-                              prev.map((it) =>
-                                it.id === item.id ? { ...it, selected: e.target.checked } : it
-                              )
-                            )
-                          }
-                        />
-                        <div>
-                          <div className="chip" style={{ marginBottom: 4, background: "#f8fafc", color: "#475569" }}>
-                            {item.category ?? "General"}
-                          </div>
-                          <strong>{item.label}</strong>
-                        </div>
-                      </label>
-                    </div>
-                    <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-                      <NumberField
-                        label="Quantity"
-                        value={sel.quantity}
-                        onChange={(v) =>
-                          setRehabSelections((prev) =>
-                            prev.map((it) =>
-                              it.id === item.id ? { ...it, quantity: v } : it
-                            )
-                          )
-                        }
-                        step={1}
-                        min={0}
-                      />
-                      <CurrencyField
-                        label="Unit cost"
-                        tooltip="Override the base unit cost if needed."
-                        value={sel.overrideUnitPrice ?? priceBands.active}
-                        onChange={(v) =>
-                          setRehabSelections((prev) =>
-                            prev.map((it) =>
-                              it.id === item.id ? { ...it, overrideUnitPrice: v } : it
-                            )
-                          )
-                        }
-                        step={500}
-                        min={0}
-                      />
-                    </div>
-                    <div style={{ marginTop: 8, color: "#0f172a", fontWeight: 600 }}>
-                      <div style={{ color: "#475569", fontWeight: 500, fontSize: 13, display: "flex", gap: 10, flexWrap: "wrap" }}>
-                        <span>Active: {formatCurrency(effectiveUnitPrice)}</span>
-                        <span style={{ color: "#94a3b8" }}>B: {formatCurrency(priceBands.B)}</span>
-                        <span style={{ color: "#94a3b8" }}>C: {formatCurrency(priceBands.C)}</span>
-                        <span style={{ color: "#94a3b8" }}>A: {formatCurrency(priceBands.A)}</span>
-                      </div>
-                      Item total: {formatCurrency((sel.quantity || 0) * effectiveUnitPrice)}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+
+            {rehabView.id === "detailed" && (
+              <div className="rehab-table-wrapper">
+                <table className="rehab-table">
+                  <thead>
+                    <tr>
+                      <th style={{ width: 60 }}>Use</th>
+                      <th>Line item</th>
+                      <th style={{ width: 140 }}>Quantity</th>
+                      <th style={{ width: 170 }}>Unit cost</th>
+                      <th style={{ width: 220 }}>Price bands</th>
+                      <th style={{ width: 140, textAlign: "right" }}>Item total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rehabTableData.map((group) => (
+                      <React.Fragment key={group.category}>
+                        <tr className="rehab-category-row">
+                          <td colSpan={6}>{group.category}</td>
+                        </tr>
+                        {group.rows.map(({ item, selection, priceBands, effectiveUnitPrice, itemTotal }) => (
+                          <tr key={item.id} className={!selection.selected ? "rehab-row muted" : "rehab-row"}>
+                            <td>
+                              <label className="sr-only" htmlFor={`${item.id}-toggle`}>
+                                Select {item.label}
+                              </label>
+                              <input
+                                id={`${item.id}-toggle`}
+                                type="checkbox"
+                                checked={selection.selected}
+                                onChange={(e) =>
+                                  setRehabSelections((prev) =>
+                                    prev.map((it) =>
+                                      it.id === item.id ? { ...it, selected: e.target.checked } : it
+                                    )
+                                  )
+                                }
+                              />
+                            </td>
+                            <td>
+                              <div className="rehab-line">
+                                <div className="chip subtle">{item.category ?? "General"}</div>
+                                <div className="rehab-line__title">{item.label}</div>
+                                <div className="rehab-line__note">
+                                  {item.unitType === "fixed"
+                                    ? "Fixed scope priced per project."
+                                    : "Quantity-driven unit pricing."}
+                                </div>
+                              </div>
+                            </td>
+                            <td>
+                              <NumberField
+                                label=""
+                                value={selection.quantity}
+                                onChange={(v) =>
+                                  setRehabSelections((prev) =>
+                                    prev.map((it) => (it.id === item.id ? { ...it, quantity: v } : it))
+                                  )
+                                }
+                                step={1}
+                                min={0}
+                              />
+                            </td>
+                            <td>
+                              <CurrencyField
+                                label=""
+                                tooltip="Override the base unit cost if needed."
+                                value={selection.overrideUnitPrice ?? priceBands.active}
+                                onChange={(v) =>
+                                  setRehabSelections((prev) =>
+                                    prev.map((it) =>
+                                      it.id === item.id ? { ...it, overrideUnitPrice: v } : it
+                                    )
+                                  )
+                                }
+                                step={500}
+                                min={0}
+                              />
+                            </td>
+                            <td>
+                              <div className="band-row">
+                                <span className="band-pill active">Active {formatCurrency(effectiveUnitPrice)}</span>
+                                <span className="band-pill">A {formatCurrency(priceBands.A)}</span>
+                                <span className="band-pill">B {formatCurrency(priceBands.B)}</span>
+                                <span className="band-pill">C {formatCurrency(priceBands.C)}</span>
+                              </div>
+                            </td>
+                            <td style={{ textAlign: "right", fontWeight: 700 }}>
+                              {formatCurrency(itemTotal)}
+                            </td>
+                          </tr>
+                        ))}
+                      </React.Fragment>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {rehabView.id === "summary" && (
+              <div className="rehab-table-wrapper">
+                <table className="rehab-table rehab-summary">
+                  <thead>
+                    <tr>
+                      <th>Category</th>
+                      <th style={{ width: 140 }}>Selected</th>
+                      <th style={{ width: 160 }}>Line items</th>
+                      <th style={{ width: 200 }}>Budget</th>
+                      <th>Next step</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rehabCategorySummaries.map((row) => (
+                      <tr key={row.category}>
+                        <td className="rehab-line__title">{row.category}</td>
+                        <td>{row.selectedCount}</td>
+                        <td>
+                          {row.totalLines} item{row.totalLines === 1 ? "" : "s"}
+                        </td>
+                        <td style={{ fontWeight: 700 }}>{formatCurrency(row.budget)}</td>
+                        <td className="rehab-line__note">
+                          {row.selectedCount === 0
+                            ? "Toggle items above to include them in your scope."
+                            : "Switch back to detailed view to fine-tune quantities and overrides."}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
             <div className="rehab-footer">
               <div style={{ fontWeight: 700 }}>
                 Rehab total: {formatCurrency(rehabTotal)}
