@@ -450,7 +450,8 @@ export function AnalyzerPage() {
   const [calcResult, setCalcResult] = useState<CalcResult>(() =>
     computeResult(strategy, buyHoldInputs, brrrrInputs, flipInputs)
   );
-  const [defaultsAppliedAt, setDefaultsAppliedAt] = useState<Partial<Record<Strategy, number>>>({});
+  type DefaultCategories = Partial<Record<"financing" | "assumptions" | "all", number>>;
+  const [defaultsAppliedAt, setDefaultsAppliedAt] = useState<Partial<Record<Strategy, DefaultCategories>>>({});
 
   useEffect(() => {
     if (!autoUpdate) return;
@@ -499,22 +500,37 @@ export function AnalyzerPage() {
     return Number.isFinite(value) ? value : fallback;
   };
 
-  const markDefaultsApplied = (strategyKey: Strategy) => {
-    setDefaultsAppliedAt((prev) => ({ ...prev, [strategyKey]: Date.now() }));
+  const markDefaultsApplied = (
+    strategyKey: Strategy,
+    category: "financing" | "assumptions" | "all" = "all"
+  ) => {
+    setDefaultsAppliedAt((prev) => ({
+      ...prev,
+      [strategyKey]: { ...(prev[strategyKey] ?? {}), [category]: Date.now() },
+    }));
+  };
+
+  const applyDefaultBuyHoldFinancing = () => {
+    setBuyHoldInputs((prev) => {
+      const next = {
+        ...prev,
+        purchaseClosingCostRate: defaultAssumptions.purchaseClosingCostRate,
+        interestRateAnnual: defaultAssumptions.longTermInterestRateAnnual,
+        loanTermMonths: defaultAssumptions.longTermLoanTermMonths,
+        ltv: defaultAssumptions.buyHoldLtv,
+      } as BuyHoldInputs;
+      if (!autoUpdate) {
+        setCalcResult(computeResult(Strategy.BUY_HOLD, next, brrrrInputs, flipInputs));
+      }
+      return next;
+    });
+    markDefaultsApplied(Strategy.BUY_HOLD, "financing");
   };
 
   const applyDefaultBuyHoldAssumptions = () => {
     setBuyHoldInputs((prev) => {
       const next = {
         ...prev,
-        purchasePrice: ensureNumber(prev.purchasePrice, defaultBuyHold.purchasePrice),
-        rehabCost: ensureNumber(prev.rehabCost, defaultBuyHold.rehabCost),
-        arv: ensureNumber(prev.arv, defaultBuyHold.arv),
-        monthlyRent: ensureNumber(prev.monthlyRent, defaultBuyHold.monthlyRent),
-        purchaseClosingCostRate: defaultAssumptions.purchaseClosingCostRate,
-        interestRateAnnual: defaultAssumptions.longTermInterestRateAnnual,
-        loanTermMonths: defaultAssumptions.longTermLoanTermMonths,
-        ltv: defaultAssumptions.buyHoldLtv,
         annualAppreciationRate: defaultAssumptions.annualAppreciationRate,
         annualRentIncreaseRate: defaultAssumptions.annualRentIncreaseRate,
         insurancePerMonth: defaultAssumptions.insurancePerMonth,
@@ -523,14 +539,13 @@ export function AnalyzerPage() {
         capexRate: defaultAssumptions.capexRate,
         managementRate: defaultAssumptions.managementRate,
         leaseUpFee: defaultAssumptions.leaseUpFee,
-        propertyTaxRate: defaultAssumptions.propertyTaxRate,
       };
       if (!autoUpdate) {
         setCalcResult(computeResult(Strategy.BUY_HOLD, next, brrrrInputs, flipInputs));
       }
       return next;
     });
-    markDefaultsApplied(Strategy.BUY_HOLD);
+    markDefaultsApplied(Strategy.BUY_HOLD, "assumptions");
   };
 
   const applyDefaultBrrrrAssumptions = () => {
@@ -597,6 +612,44 @@ export function AnalyzerPage() {
     });
     markDefaultsApplied(Strategy.FLIP);
   };
+
+  const isDifferentFromDefault = (value: number | undefined, defaultValue: number) =>
+    (value ?? defaultValue) !== defaultValue;
+
+  const buyHoldFinancingDirty = useMemo(
+    () =>
+      isDifferentFromDefault(
+        buyHoldInputs.purchaseClosingCostRate,
+        defaultAssumptions.purchaseClosingCostRate
+      ) ||
+      isDifferentFromDefault(buyHoldInputs.interestRateAnnual, defaultAssumptions.longTermInterestRateAnnual) ||
+      isDifferentFromDefault(buyHoldInputs.loanTermMonths, defaultAssumptions.longTermLoanTermMonths) ||
+      isDifferentFromDefault(buyHoldInputs.ltv, defaultAssumptions.buyHoldLtv),
+    [buyHoldInputs]
+  );
+
+  const buyHoldAssumptionsDirty = useMemo(
+    () =>
+      isDifferentFromDefault(
+        buyHoldInputs.annualAppreciationRate,
+        defaultAssumptions.annualAppreciationRate
+      ) ||
+      isDifferentFromDefault(
+        buyHoldInputs.annualRentIncreaseRate,
+        defaultAssumptions.annualRentIncreaseRate
+      ) ||
+      isDifferentFromDefault(buyHoldInputs.insurancePerMonth, defaultAssumptions.insurancePerMonth) ||
+      isDifferentFromDefault(buyHoldInputs.vacancyRate, defaultAssumptions.vacancyRate) ||
+      isDifferentFromDefault(buyHoldInputs.repairsRate, defaultAssumptions.repairsRate) ||
+      isDifferentFromDefault(buyHoldInputs.capexRate, defaultAssumptions.capexRate) ||
+      isDifferentFromDefault(buyHoldInputs.managementRate, defaultAssumptions.managementRate) ||
+      isDifferentFromDefault(buyHoldInputs.leaseUpFee, defaultAssumptions.leaseUpFee),
+    [buyHoldInputs]
+  );
+
+  const buyHoldDefaultsApplied = defaultsAppliedAt[Strategy.BUY_HOLD] ?? {};
+  const buyHoldFinancingDefaultsApplied = Boolean(buyHoldDefaultsApplied.financing);
+  const buyHoldAssumptionsDefaultsApplied = Boolean(buyHoldDefaultsApplied.assumptions);
 
   return (
     <main className="page">
@@ -752,31 +805,43 @@ export function AnalyzerPage() {
               </div>
             </Collapsible>
 
-            <Collapsible title="Financing & assumptions" defaultOpen={false}>
-              <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                {defaultsAppliedAt[Strategy.BUY_HOLD] && (
-                  <span
-                    className="chip"
-                    style={{
-                      background: "#ecfeff",
-                      color: "#0b7099",
-                      border: "1px solid #bae6fd",
-                      boxShadow: "0 4px 8px rgba(11, 112, 153, 0.08)",
-                    }}
-                    aria-live="polite"
-                  >
-                    Defaults applied
-                  </span>
-                )}
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  style={{ padding: "10px 12px", borderRadius: 10 }}
-                  onClick={applyDefaultBuyHoldAssumptions}
+            <Collapsible title="Financing" defaultOpen={false}>
+              {(buyHoldFinancingDefaultsApplied || buyHoldFinancingDirty) && (
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "flex-end",
+                    alignItems: "center",
+                    gap: 8,
+                    marginBottom: 8,
+                  }}
                 >
-                  Apply industry defaults
-                </button>
-              </div>
+                  {buyHoldFinancingDefaultsApplied && (
+                    <span
+                      className="chip"
+                      style={{
+                        background: "#ecfeff",
+                        color: "#0b7099",
+                        border: "1px solid #bae6fd",
+                        boxShadow: "0 4px 8px rgba(11, 112, 153, 0.08)",
+                      }}
+                      aria-live="polite"
+                    >
+                      Defaults applied
+                    </span>
+                  )}
+                  {buyHoldFinancingDirty && (
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      style={{ padding: "10px 12px", borderRadius: 10 }}
+                      onClick={applyDefaultBuyHoldFinancing}
+                    >
+                      Apply industry defaults
+                    </button>
+                  )}
+                </div>
+              )}
               <div className="grid two">
                 <PercentField
                   label="Purchase closing cost rate"
@@ -822,6 +887,47 @@ export function AnalyzerPage() {
                     setBuyHoldInputs({ ...buyHoldInputs, ltv: v })
                   }
                 />
+              </div>
+            </Collapsible>
+
+            <Collapsible title="Operating assumptions" defaultOpen={false}>
+              {(buyHoldAssumptionsDefaultsApplied || buyHoldAssumptionsDirty) && (
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "flex-end",
+                    alignItems: "center",
+                    gap: 8,
+                    marginBottom: 8,
+                  }}
+                >
+                  {buyHoldAssumptionsDefaultsApplied && (
+                    <span
+                      className="chip"
+                      style={{
+                        background: "#ecfeff",
+                        color: "#0b7099",
+                        border: "1px solid #bae6fd",
+                        boxShadow: "0 4px 8px rgba(11, 112, 153, 0.08)",
+                      }}
+                      aria-live="polite"
+                    >
+                      Defaults applied
+                    </span>
+                  )}
+                  {buyHoldAssumptionsDirty && (
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      style={{ padding: "10px 12px", borderRadius: 10 }}
+                      onClick={applyDefaultBuyHoldAssumptions}
+                    >
+                      Apply industry defaults
+                    </button>
+                  )}
+                </div>
+              )}
+              <div className="grid two">
                 <PercentField
                   label="Annual appreciation"
                   value={buyHoldInputs.annualAppreciationRate}
