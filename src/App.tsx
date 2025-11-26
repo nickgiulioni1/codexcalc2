@@ -1,5 +1,5 @@
 import React from "react";
-import { BrowserRouter, Routes, Route, Link, useParams, useNavigate } from "react-router-dom";
+import { HashRouter, Routes, Route, Link, useParams, useNavigate } from "react-router-dom";
 import { AnalyzerPage } from "./pages/AnalyzerPage";
 import {
   listAnalyses,
@@ -22,7 +22,7 @@ import { useState } from "react";
 
 export default function App() {
   return (
-    <BrowserRouter basename={import.meta.env.BASE_URL}>
+    <HashRouter>
       <div className="app-shell">
         <header className="header">
           <div className="brand">Off Leash Deal Analyzer</div>
@@ -43,7 +43,7 @@ export default function App() {
           <Route path="/admin/properties" element={<PropertiesPage />} />
         </Routes>
       </div>
-    </BrowserRouter>
+    </HashRouter>
   );
 }
 
