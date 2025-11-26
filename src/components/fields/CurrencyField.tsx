@@ -10,7 +10,7 @@ export function CurrencyField({
   fallbackValue,
 }: {
   label: string;
-  value: number | string;
+  value: number | string | undefined;
   onChange: (value: number) => void;
   step?: number | "any";
   min?: number;

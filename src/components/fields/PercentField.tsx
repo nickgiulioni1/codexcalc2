@@ -9,7 +9,7 @@ export function PercentField({
   mode = "percent",
 }: {
   label: string;
-  value: number | string;
+  value: number | string | undefined;
   onChange: (value: number) => void;
   tooltip?: string;
   fallbackValue?: number;
