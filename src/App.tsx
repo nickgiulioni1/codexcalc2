@@ -22,7 +22,7 @@ import { useState } from "react";
 
 export default function App() {
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={import.meta.env.BASE_URL}>
       <div className="app-shell">
         <header className="header">
           <div className="brand">Off Leash Deal Analyzer</div>
